@@ -455,6 +455,10 @@ class ZcashZebraDaemon(Daemon):
 
     async def _send_data(self, data):
         result = await super()._send_data(data)
+        # Zebra returns an object instead of an array for a JSON-RPC batch
+        # containing exactly one request.
+        if data.lstrip().startswith('[') and isinstance(result, dict):
+            result = [result]
         responses = result if isinstance(result, list) else [result]
         for response in responses:
             # ElectrumX's existing processors use the legacy envelope where

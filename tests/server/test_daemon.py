@@ -118,6 +118,16 @@ class ClientSessionReorderedBatch(ClientSessionGood):
         return response
 
 
+class ClientSessionSingleBatchResponse(ClientSessionGood):
+    '''Imitate Zebra's object response to a one-item JSON-RPC batch.'''
+
+    def post(self, url, data=""):
+        response = super().post(url, data)
+        if isinstance(response.msg_id, list):
+            return JSONResponse(response.result[0], response.msg_id[0])
+        return response
+
+
 class ClientSessionBadAuth:
 
     def post(self, url, data=""):
@@ -404,6 +414,8 @@ async def test_zebra_daemon_request_compatibility():
     daemon = ZcashZebraDaemon(Zcash, urls[0])
     assert Zcash.DAEMON is ZcashZebraDaemon
     assert Zcash.SESSIONCLS.PROTOCOL_MAX == (1, 5, 2)
+    assert Zcash.max_fetch_blocks(0) == 10
+    assert Zcash.max_fetch_blocks(3_481_169) == 10
     assert daemon._single_payload('getrawmempool', None)['params'] == ()
 
     daemon.session = ClientSessionJSONWithCharset(('getblockcount', [], 1))
@@ -413,6 +425,9 @@ async def test_zebra_daemon_request_compatibility():
     daemon.session = ClientSessionGood(('getblock', [[block_hash, 0] for block_hash in hashes],
                                         ['00', 'ff']))
     assert await daemon.raw_blocks(hashes) == [b'\x00', b'\xff']
+
+    daemon.session = ClientSessionSingleBatchResponse(('getblock', [['block0', 0]], ['00']))
+    assert await daemon.raw_blocks(['block0']) == [b'\x00']
 
     daemon.session = ClientSessionGood(('getblock', ['block0', 1], {'hash': 'block0'}))
     assert await daemon.deserialised_block('block0') == {'hash': 'block0'}

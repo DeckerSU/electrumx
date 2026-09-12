@@ -1406,6 +1406,12 @@ class Zcash(EquihashMixin, Coin):
     RPC_PORT = 8232
     REORG_LIMIT = 800
 
+    @classmethod
+    def max_fetch_blocks(cls, height: int) -> int:
+        # Zebra rejects JSON-RPC batch responses larger than 50 MiB.  Zcash
+        # blocks can contain large shielded transactions, so stay below it.
+        return 10
+
 
 class ZcashTestnet(Zcash):
     SHORTNAME = "TAZ"
