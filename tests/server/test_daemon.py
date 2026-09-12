@@ -414,8 +414,17 @@ async def test_zebra_daemon_request_compatibility():
     daemon = ZcashZebraDaemon(Zcash, urls[0])
     assert Zcash.DAEMON is ZcashZebraDaemon
     assert Zcash.SESSIONCLS.PROTOCOL_MAX == (1, 5, 2)
-    assert Zcash.max_fetch_blocks(0) == 10
-    assert Zcash.max_fetch_blocks(3_481_169) == 10
+    assert Zcash.max_fetch_blocks(0) == 8
+    assert Zcash.max_fetch_blocks(347_500) == 10
+    assert Zcash.max_fetch_blocks(419_200) == 20
+    assert Zcash.max_fetch_blocks(653_600) == 600
+    assert Zcash.max_fetch_blocks(903_000) == 200
+    assert Zcash.max_fetch_blocks(1_046_400) == 10
+    assert Zcash.max_fetch_blocks(1_687_104) == 8
+    assert Zcash.max_fetch_blocks(2_726_400) == 140
+    assert Zcash.max_fetch_blocks(3_146_400) == 100
+    assert Zcash.max_fetch_blocks(3_364_600) == 100
+    assert Zcash.max_fetch_blocks(3_428_143) == 8
     assert daemon._single_payload('getrawmempool', None)['params'] == ()
 
     daemon.session = ClientSessionJSONWithCharset(('getblockcount', [], 1))
