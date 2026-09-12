@@ -6,8 +6,8 @@ import logging
 import pytest
 
 from aiorpcx import JSONRPCv1, JSONRPCLoose, RPCError, ignore_after, Request
-from electrumx.lib.coins import BitcoinCash, CoinError, Bitzeny, Dash
-from electrumx.server.daemon import Daemon, FakeEstimateFeeDaemon
+from electrumx.lib.coins import BitcoinCash, CoinError, Bitzeny, Dash, Zcash
+from electrumx.server.daemon import Daemon, FakeEstimateFeeDaemon, ZcashZebraDaemon
 
 
 coin = BitcoinCash
@@ -97,6 +97,25 @@ class ClientSessionGood:
                 assert payload['params'] == args
                 request_ids.append(payload['id'])
             return JSONResponse(result, request_ids)
+
+
+class ClientSessionJSONWithCharset(ClientSessionGood):
+    '''Imitate Zebra's RFC-compliant JSON response content type.'''
+
+    def post(self, url, data=""):
+        response = super().post(url, data)
+        response.headers['Content-Type'] = 'application/json; charset=utf-8'
+        return response
+
+
+class ClientSessionReorderedBatch(ClientSessionGood):
+    '''Return a valid batch response in a different order from its request.'''
+
+    def post(self, url, data=""):
+        response = super().post(url, data)
+        if isinstance(response.msg_id, list):
+            return JSONResponse(response.result[::-1], response.msg_id[::-1])
+        return response
 
 
 class ClientSessionBadAuth:
@@ -370,6 +389,43 @@ async def test_raw_blocks(daemon):
     blocks_raw = [bytes.fromhex(block) for block in blocks]
     daemon.session = ClientSessionGood(('getblock', args_list, blocks))
     assert await daemon.raw_blocks(iterable) == blocks_raw
+
+
+@pytest.mark.asyncio
+async def test_raw_blocks_accept_reordered_batch_response(daemon):
+    hashes = ['block0', 'block1']
+    daemon.session = ClientSessionReorderedBatch(
+        ('getblock', [[block_hash, False] for block_hash in hashes], ['00', 'ff']))
+    assert await daemon.raw_blocks(hashes) == [b'\x00', b'\xff']
+
+
+@pytest.mark.asyncio
+async def test_zebra_daemon_request_compatibility():
+    daemon = ZcashZebraDaemon(Zcash, urls[0])
+    assert Zcash.DAEMON is ZcashZebraDaemon
+    assert Zcash.SESSIONCLS.PROTOCOL_MAX == (1, 5, 2)
+    assert daemon._single_payload('getrawmempool', None)['params'] == ()
+
+    daemon.session = ClientSessionJSONWithCharset(('getblockcount', [], 1))
+    assert await daemon.height() == 1
+
+    hashes = ['block0', 'block1']
+    daemon.session = ClientSessionGood(('getblock', [[block_hash, 0] for block_hash in hashes],
+                                        ['00', 'ff']))
+    assert await daemon.raw_blocks(hashes) == [b'\x00', b'\xff']
+
+    daemon.session = ClientSessionGood(('getblock', ['block0', 1], {'hash': 'block0'}))
+    assert await daemon.deserialised_block('block0') == {'hash': 'block0'}
+    assert await daemon.estimatefee(1) == -1
+
+    session = object.__new__(Zcash.SESSIONCLS)
+    session.bump_cost = lambda cost: None
+    session.set_request_handlers((1, 5, 2))
+    assert 'mempool.get_info' not in session.request_handlers
+    assert 'blockchain.transaction.broadcast_package' not in session.request_handlers
+    assert await session.phandle_estimatefee(1) == -1
+    with pytest.raises(RPCError):
+        await session.phandle_estimatefee(1, 'economical')
 
 
 @pytest.mark.asyncio

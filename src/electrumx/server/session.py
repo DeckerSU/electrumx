@@ -2422,6 +2422,21 @@ class ElectrumX(SessionBase):
         self.notification_handlers = notif_handlers
 
 
+class ZcashElectrumX(ElectrumX):
+    '''Electrum methods supportable from Zebra without a compatibility proxy.'''
+
+    # Zebra does not provide the mempool fee and recent-transaction data
+    # required by the 1.6 and later Electrum methods.
+    PROTOCOL_MAX = (1, 5, 2)
+
+    async def phandle_estimatefee(self, number: int | Any, mode=None):
+        non_negative_integer(number)
+        if mode is not None:
+            raise RPCError(BAD_REQUEST, 'estimatefee mode is unsupported for Zcash')
+        self.bump_cost(0.1)
+        return -1
+
+
 class LocalRPC(SessionBase):
     '''A local TCP RPC server session.'''
 

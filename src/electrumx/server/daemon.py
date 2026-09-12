@@ -158,7 +158,7 @@ class Daemon:
         async with self.workqueue_semaphore:
             async with self.session.post(self.current_url(), data=data) as resp:
                 kind = resp.headers.get('Content-Type', None)
-                if kind == 'application/json':
+                if kind and kind.split(';', 1)[0].strip().lower() == 'application/json':
                     return await resp.json(loads=json_deserialize)
                 text = await resp.text()
                 text = text.strip() or resp.reason
@@ -229,10 +229,15 @@ class Daemon:
                 raise DaemonParseError(err)
             raise DaemonError(err)
 
+        payload = self._single_payload(method, params)
+        return await self._send(payload, processor)
+
+    def _single_payload(self, method, params):
+        '''Build a JSON-RPC request for one daemon method.'''
         payload = {'method': method, 'id': next(self.id_counter)}
         if params:
             payload['params'] = params
-        return await self._send(payload, processor)
+        return payload
 
     async def _send_vector(self, method, params_iterable, replace_errs=False):
         '''Send several requests of the same method.
@@ -240,7 +245,16 @@ class Daemon:
         The result will be an array of the same length as params_iterable.
         If replace_errs is true, any item with an error is returned as None,
         otherwise an exception is raised.'''
+        payload = self._vector_payload(method, params_iterable)
+
         def processor(result):
+            if not isinstance(result, list):
+                raise DaemonError('non-batch response to batch request')
+            by_id = {item.get('id'): item for item in result}
+            request_ids = [item['id'] for item in payload]
+            if len(by_id) != len(result) or set(by_id) != set(request_ids):
+                raise DaemonError('batch response IDs do not match request IDs')
+            result = [by_id[request_id] for request_id in request_ids]
             errs = [item['error'] for item in result if item['error']]
             if any(err.get('code') == self.RPC_IN_WARMUP for err in errs):
                 raise WarmingUpError
@@ -250,11 +264,13 @@ class Daemon:
                 return [item['result'] for item in result]
             raise DaemonError(errs)
 
-        payload = [{'method': method, 'params': p, 'id': next(self.id_counter)}
-                   for p in params_iterable]
         if payload:
             return await self._send(payload, processor)
         return []
+
+    def _vector_payload(self, method, params_iterable):
+        return [{'method': method, 'params': params, 'id': next(self.id_counter)}
+                for params in params_iterable]
 
     async def _is_rpc_available(self, method: str) -> bool:
         '''Return whether given RPC method is available in the daemon.
@@ -419,6 +435,47 @@ class DashDaemon(Daemon):
     async def protx(self, params):
         '''Set of commands to execute ProTx related actions.'''
         return await self._send_single('protx', params)
+
+
+class ZcashZebraDaemon(Daemon):
+    '''Zebra's compatible RPC with its explicit parameter and verbosity rules.'''
+
+    def _single_payload(self, method, params):
+        # Zebra requires the params member even for an empty parameter list.
+        payload = super()._single_payload(method, params)
+        payload['jsonrpc'] = '2.0'
+        payload['params'] = () if params is None else params
+        return payload
+
+    def _vector_payload(self, method, params_iterable):
+        payload = super()._vector_payload(method, params_iterable)
+        for request in payload:
+            request['jsonrpc'] = '2.0'
+        return payload
+
+    async def _send_data(self, data):
+        result = await super()._send_data(data)
+        responses = result if isinstance(result, list) else [result]
+        for response in responses:
+            # ElectrumX's existing processors use the legacy envelope where
+            # both keys are always present.  Zebra's JSON-RPC 2.0 successes
+            # omit ``error`` and error responses omit ``result``.
+            response.setdefault('error', None)
+            response.setdefault('result', None)
+        return result
+
+    async def deserialised_block(self, bhash_hum: str) -> dict:
+        return await self._send_single('getblock', (bhash_hum, 1))
+
+    async def raw_blocks(self, bhashes_hum: Sequence[str]) -> Sequence[bytes]:
+        # Zebra accepts numeric verbosity; unlike zcashd it rejects False here.
+        blocks = await self._send_vector('getblock', ((h, 0) for h in bhashes_hum))
+        return [hex_to_bytes(block) for block in blocks]
+
+    async def estimatefee(self, block_count, estimate_mode=None):
+        # Zebra does not expose a fee-estimation RPC.  Electrum's defined
+        # sentinel for an unavailable estimate is -1.
+        return -1
 
 
 class FakeEstimateFeeDaemon(Daemon):

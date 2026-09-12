@@ -40,6 +40,8 @@ class MemPoolTx:
     out_pairs: Sequence[tuple[bytes, int]]  # (hashX, value_in_sats)
     fee: int  # in sats
     size: int  # in vbytes
+    # Net public value balance of Zcash shielded bundles, in zatoshis.
+    fee_adjustment: int = 0
 
 
 @dataclass(slots=True)
@@ -293,12 +295,16 @@ class MemPool:
             # Spend the prevouts
             unspent.difference_update(tx.prevouts)
 
-            # Save the in_pairs, compute the fee and accept the TX
+            # Save the in_pairs, compute the fee and accept the TX.  Zcash
+            # shielded bundle value balances are part of the fee equation.
             tx.in_pairs = tuple(in_pairs)
-            # Avoid negative fees if dealing with generation-like transactions
-            # because some in_parts would be missing
-            tx.fee = max(0, (sum(v for _, v in tx.in_pairs) -
-                             sum(v for _, v in tx.out_pairs)))
+            fee = (sum(v for _, v in tx.in_pairs) -
+                   sum(v for _, v in tx.out_pairs) + tx.fee_adjustment)
+            if fee < 0 and tx.fee_adjustment:
+                raise ValueError(f'negative shielded-aware mempool fee for {txid_rev.hex()}')
+            # Preserve the generation-like input handling for existing coins,
+            # where inputs can be intentionally absent from the UTXO map.
+            tx.fee = max(0, fee)
             txs[txid_rev] = tx
 
             for hashX, _value in itertools.chain(tx.in_pairs, tx.out_pairs):
@@ -494,6 +500,7 @@ class MemPool:
                     out_pairs=txout_pairs,
                     fee=0,
                     size=tx_size,
+                    fee_adjustment=getattr(tx, 'fee_adjustment', 0),
                 )
             return txs
 
