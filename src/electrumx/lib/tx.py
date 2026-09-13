@@ -705,6 +705,11 @@ class DeserializerZcash(DeserializerEquihash):
         consensus_branch_id = int.from_bytes(branch_id_bytes, 'little')
         locktime = int.from_bytes(self._zcash_read(4), 'little')
         expiry_height = int.from_bytes(self._zcash_read(4), 'little')
+        # This is the NU6.3 v6 layout.  ZIP-233, which Zebra does not currently
+        # enable, inserts an 8-byte zip233Amount here.  Its value must be committed
+        # to header_digest and subtracted from fee_adjustment.  Do not silently parse
+        # ZIP-233 transactions using this layout; add an activation-aware branch when
+        # that consensus change is deployed.
         header_digest = self._hash(b'ZTxIdHeadersHash',
                                    header + version_group_id.to_bytes(4, 'little') +
                                    branch_id_bytes + locktime.to_bytes(4, 'little') +
