@@ -159,7 +159,21 @@ class Daemon:
             async with self.session.post(self.current_url(), data=data) as resp:
                 kind = resp.headers.get('Content-Type', None)
                 if kind and kind.split(';', 1)[0].strip().lower() == 'application/json':
-                    return await resp.json(loads=json_deserialize)
+                    result = await resp.json(loads=json_deserialize)
+                    parsed_data = json_deserialize(data)
+                    # Some daemons, unlike Bitcoin Core, return an object for
+                    # a one-request batch.
+                    # Never accept this shape for a larger batch.
+                    if (isinstance(parsed_data, list) and len(parsed_data) == 1
+                            and isinstance(result, dict)):
+                        result = [result]
+                    responses = result if isinstance(result, list) else [result]
+                    for response in responses:
+                        # Existing processors expect both legacy envelope keys;
+                        # JSON-RPC 2.0 returns only result or error.
+                        response.setdefault('error', None)
+                        response.setdefault('result', None)
+                    return result
                 text = await resp.text()
                 text = text.strip() or resp.reason
                 raise ServiceRefusedError(text)
@@ -234,10 +248,8 @@ class Daemon:
 
     def _single_payload(self, method, params):
         '''Build a JSON-RPC request for one daemon method.'''
-        payload = {'method': method, 'id': next(self.id_counter)}
-        if params:
-            payload['params'] = params
-        return payload
+        return {'jsonrpc': '2.0', 'method': method, 'id': next(self.id_counter),
+                'params': () if params is None else params}
 
     async def _send_vector(self, method, params_iterable, replace_errs=False):
         '''Send several requests of the same method.
@@ -269,7 +281,8 @@ class Daemon:
         return []
 
     def _vector_payload(self, method, params_iterable):
-        return [{'method': method, 'params': params, 'id': next(self.id_counter)}
+        return [{'jsonrpc': '2.0', 'method': method, 'params': params,
+                 'id': next(self.id_counter)}
                 for params in params_iterable]
 
     async def _is_rpc_available(self, method: str) -> bool:
@@ -296,11 +309,12 @@ class Daemon:
 
     async def deserialised_block(self, bhash_hum: str) -> dict:
         '''Return the deserialised block with the given hex hash.'''
-        return await self._send_single('getblock', (bhash_hum, True))
+        return await self._send_single('getblock', (bhash_hum, 1))
 
     async def raw_blocks(self, bhashes_hum: Sequence[str]) -> Sequence[bytes]:
         '''Return the raw binary blocks with the given hex hashes.'''
-        params_iterable = ((h, False) for h in bhashes_hum)
+        # Use numeric verbosity: some daemons reject boolean values.
+        params_iterable = ((h, 0) for h in bhashes_hum)
         blocks = await self._send_vector('getblock', params_iterable)
         # Convert hex string to bytes
         return [hex_to_bytes(block) for block in blocks]
@@ -438,43 +452,7 @@ class DashDaemon(Daemon):
 
 
 class ZcashZebraDaemon(Daemon):
-    '''Zebra's compatible RPC with its explicit parameter and verbosity rules.'''
-
-    def _single_payload(self, method, params):
-        # Zebra requires the params member even for an empty parameter list.
-        payload = super()._single_payload(method, params)
-        payload['jsonrpc'] = '2.0'
-        payload['params'] = () if params is None else params
-        return payload
-
-    def _vector_payload(self, method, params_iterable):
-        payload = super()._vector_payload(method, params_iterable)
-        for request in payload:
-            request['jsonrpc'] = '2.0'
-        return payload
-
-    async def _send_data(self, data):
-        result = await super()._send_data(data)
-        # Zebra returns an object instead of an array for a JSON-RPC batch
-        # containing exactly one request.
-        if data.lstrip().startswith('[') and isinstance(result, dict):
-            result = [result]
-        responses = result if isinstance(result, list) else [result]
-        for response in responses:
-            # ElectrumX's existing processors use the legacy envelope where
-            # both keys are always present.  Zebra's JSON-RPC 2.0 successes
-            # omit ``error`` and error responses omit ``result``.
-            response.setdefault('error', None)
-            response.setdefault('result', None)
-        return result
-
-    async def deserialised_block(self, bhash_hum: str) -> dict:
-        return await self._send_single('getblock', (bhash_hum, 1))
-
-    async def raw_blocks(self, bhashes_hum: Sequence[str]) -> Sequence[bytes]:
-        # Zebra accepts numeric verbosity; unlike zcashd it rejects False here.
-        blocks = await self._send_vector('getblock', ((h, 0) for h in bhashes_hum))
-        return [hex_to_bytes(block) for block in blocks]
+    '''Zcash daemon with a fallback for Zebra's unavailable fee estimation.'''
 
     async def estimatefee(self, block_count, estimate_mode=None):
         # Zebra does not expose a fee-estimation RPC.  Electrum's defined
