@@ -413,7 +413,7 @@ async def test_raw_blocks_accept_reordered_batch_response(daemon):
 async def test_zebra_daemon_request_compatibility():
     daemon = ZcashZebraDaemon(Zcash, urls[0])
     assert Zcash.DAEMON is ZcashZebraDaemon
-    assert Zcash.SESSIONCLS.PROTOCOL_MAX == (1, 5, 2)
+    assert Zcash.SESSIONCLS.PROTOCOL_MAX == (1, 4, 3)
     assert Zcash.max_fetch_blocks(0) == 8
     assert Zcash.max_fetch_blocks(347_500) == 10
     assert Zcash.max_fetch_blocks(419_200) == 20
@@ -444,7 +444,7 @@ async def test_zebra_daemon_request_compatibility():
 
     session = object.__new__(Zcash.SESSIONCLS)
     session.bump_cost = lambda cost: None
-    session.set_request_handlers((1, 5, 2))
+    session.set_request_handlers((1, 4, 3))
     assert 'mempool.get_info' not in session.request_handlers
     assert 'blockchain.transaction.broadcast_package' not in session.request_handlers
     assert await session.phandle_estimatefee(1) == -1

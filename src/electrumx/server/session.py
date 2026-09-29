@@ -2425,9 +2425,9 @@ class ElectrumX(SessionBase):
 class ZcashElectrumX(ElectrumX):
     '''Electrum methods supportable from Zebra without a compatibility proxy.'''
 
-    # Zebra does not provide the mempool fee and recent-transaction data
-    # required by the 1.6 and later Electrum methods.
-    PROTOCOL_MAX = (1, 5, 2)
+    # Keep the upstream pre-1.6 protocol ceiling: Zebra cannot provide
+    # the daemon RPC capabilities required by the 1.6 handlers.
+    PROTOCOL_MAX = (1, 4, 3)
 
     async def phandle_estimatefee(self, number: int | Any, mode=None):
         non_negative_integer(number)
