@@ -11,7 +11,7 @@ import pytest
 from electrumx.lib.coins import Zcash
 from electrumx.lib.hash import double_sha256, hash_to_hex_str, hex_str_to_hash
 from electrumx.lib.tx import DeserializerZcash, TxZcash, ZcashDeserializeError
-from electrumx.server.mempool import MemPool, MemPoolTx
+from electrumx.server.mempool_zcash import ZcashMemPool, ZcashMemPoolTx
 
 
 FIXTURES = sorted((Path(__file__).parents[1] / 'transactions').glob('zcash_*.json'))
@@ -128,13 +128,13 @@ def test_zcash_effecting_and_authorizing_bytes_have_expected_txid_behavior(name)
 
 
 def test_zcash_fee_adjustment_is_included_in_mempool_fee():
-    pool = object.__new__(MemPool)
+    pool = object.__new__(ZcashMemPool)
     pool.hashXs = defaultdict(set)
     pool.txs = {}
     pool.txo_to_spender = {}
     prevout = (b'P' * 32, 0)
     txid = b'T' * 32
-    tx = MemPoolTx(
+    tx = ZcashMemPoolTx(
         prevouts=(prevout,), in_pairs=None, out_pairs=((b'X' * 11, 60),),
         fee=0, size=100, fee_adjustment=7,
     )
@@ -148,12 +148,12 @@ def test_zcash_fee_adjustment_is_included_in_mempool_fee():
 
 
 def test_zcash_negative_shielded_aware_fee_is_not_silently_clamped():
-    pool = object.__new__(MemPool)
+    pool = object.__new__(ZcashMemPool)
     pool.hashXs = defaultdict(set)
     pool.txs = {}
     pool.txo_to_spender = {}
     prevout = (b'P' * 32, 0)
-    tx = MemPoolTx(
+    tx = ZcashMemPoolTx(
         prevouts=(prevout,), in_pairs=None, out_pairs=((b'X' * 11, 100),),
         fee=0, size=100, fee_adjustment=-1,
     )
